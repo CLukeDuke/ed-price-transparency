@@ -1,0 +1,136 @@
+# =============================================================================
+# R/helpers.R
+# Utility functions used across app.R and fetch_mrf_data.R
+#
+# Keeping helpers in a separate file means:
+#   1. app.R stays readable — no walls of utility code
+#   2. helpers can be unit-tested independently with testthat
+#   3. fetch_mrf_data.R can source() the same helpers without duplication
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# find_match()
+# Fuzzy keyword matching: maps a user's free-text symptom to one of our known
+# PRICE_DATA keys. Returns NULL if no match found.
+#
+# Strategy:
+#   1. Exact match first (fastest, most reliable)
+#   2. Any keyword in the query longer than 3 chars matches a key word
+#   3. NULL → caller will try the Claude API instead
+#
+# We deliberately keep this simple. A production version might use:
+#   - stringdist::stringsim() for edit distance
+#   - text embeddings for semantic matching
+#   - The Claude API itself for classification
+# -----------------------------------------------------------------------------
+find_match <- function(query) {
+  query <- stringr::str_to_lower(stringr::str_trim(query))
+  keys  <- names(PRICE_DATA)
+
+  # Pass 1: exact match
+  if (query %in% keys) return(query)
+
+  # Pass 2: any content word in query appears in a key
+  query_words <- stringr::str_split(query, "\\s+")[[1]]
+  query_words <- query_words[nchar(query_words) > 3]  # skip short words
+
+  for (key in keys) {
+    key_words <- stringr::str_split(key, "\\s+")[[1]]
+    if (any(query_words %in% key_words)) return(key)
+  }
+
+  # Pass 3: any key word appears in the query
+  for (key in keys) {
+    key_words <- stringr::str_split(key, "\\s+")[[1]]
+    key_words <- key_words[nchar(key_words) > 3]
+    if (any(sapply(key_words, function(w) stringr::str_detect(query, w)))) return(key)
+  }
+
+  NULL  # No match — caller will escalate to Claude API
+}
+
+# -----------------------------------------------------------------------------
+# fmt_dollar()
+# Format a numeric value as a dollar string.
+# scales::dollar() does this, but we wrap it so we can change the format once.
+# Example: fmt_dollar(3640) → "$3,640"
+# -----------------------------------------------------------------------------
+fmt_dollar <- function(x) {
+  scales::dollar(round(x), prefix = "$", big.mark = ",")
+}
+
+# -----------------------------------------------------------------------------
+# get_hospital_name()
+# Given a condition's data list, find which hospital has the min or max of a
+# specific price field. Used to populate the "lowest cash price at X" value box.
+#
+# d       — a single PRICE_DATA entry (list with $prices sub-list)
+# field   — the price field: "cash", "gross", "min_neg", or "max_neg"
+# which   — "min" or "max"
+# -----------------------------------------------------------------------------
+get_hospital_name <- function(d, field, which_fn = "min") {
+  vals <- sapply(names(d$prices), function(hid) d$prices[[hid]][[field]])
+
+  target_id <- if (which_fn == "min") {
+    names(which.min(vals))
+  } else {
+    names(which.max(vals))
+  }
+
+  # Look up the full name from the HOSPITALS data frame
+  hosp_row <- HOSPITALS[HOSPITALS$id == target_id, ]
+  if (nrow(hosp_row) == 0) return(target_id)
+  hosp_row$name[1]
+}
+
+# -----------------------------------------------------------------------------
+# build_placeholder_prices()
+# When Claude identifies billing codes that aren't in our local dataset, we
+# still need a price structure so the app doesn't crash. This returns a list
+# of plausible median-ish prices for a typical ED visit — clearly marked as
+# estimated.
+#
+# In a production app, we would look these codes up in the actual MRF data.
+# -----------------------------------------------------------------------------
+build_placeholder_prices <- function() {
+  list(
+    tgh = list(gross = 11500, cash = 3800, min_neg = 2000, max_neg = 8200),
+    sjh = list(gross = 10200, cash = 3380, min_neg = 1800, max_neg = 7250),
+    adv = list(gross = 11900, cash = 3940, min_neg = 2070, max_neg = 8480),
+    brd = list(gross =  9740, cash = 3220, min_neg = 1720, max_neg = 6900),
+    stm = list(gross = 10280, cash = 3400, min_neg = 1810, max_neg = 7290),
+    wtm = list(gross =  9800, cash = 3235, min_neg = 1730, max_neg = 6940),
+    sfb = list(gross =  8600, cash = 2845, min_neg = 1530, max_neg = 6100)
+  )
+}
+
+# -----------------------------------------------------------------------------
+# heat_color()
+# Interpolate between green (low cost) and orange (high cost) based on where
+# a value falls within its row's [min, max] range.
+# Returns an RGB string like "rgb(225, 245, 238)"
+#
+# Used by the heatmap table in the All Conditions tab.
+# The reactable JS version in app.R does the same math client-side for
+# performance — this R version is available for server-side use or testing.
+# -----------------------------------------------------------------------------
+heat_color <- function(value, row_min, row_max) {
+  if (row_max == row_min) return("rgb(225, 245, 238)")  # all same → green
+
+  t <- (value - row_min) / (row_max - row_min)  # t in [0, 1]
+
+  if (t < 0.5) {
+    # Interpolate: teal-50 (#E1F5EE) → teal-100 (#9FE1CB)
+    r <- round(225 + (185 - 225) * t * 2)
+    g <- round(245 + (218 - 245) * t * 2)
+    b <- round(238 + (201 - 238) * t * 2)
+  } else {
+    # Interpolate: coral-50 (#FAECE7) → coral-100 (#F5C4B3)
+    tt <- (t - 0.5) * 2
+    r  <- round(250 + (245 - 250) * tt)
+    g  <- round(236 + (196 - 236) * tt)
+    b  <- round(231 + (179 - 231) * tt)
+  }
+
+  sprintf("rgb(%d, %d, %d)", r, g, b)
+}

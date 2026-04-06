@@ -1,0 +1,768 @@
+# =============================================================================
+# app.R
+# ED Price Transparency Tool — Hillsborough County, FL
+# GLHLTH 562 Final Project
+#
+# This single file contains both the UI and Server logic for the Shiny app.
+# In Shiny, you can split these into ui.R and server.R, but keeping them
+# together in app.R makes deployment simpler.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. LOAD LIBRARIES
+# Every package must be installed before running. If you get "there is no
+# package called X", run: install.packages("X") in the console first.
+# -----------------------------------------------------------------------------
+library(shiny)          # Core Shiny framework — UI + server reactivity
+library(bslib)          # Bootstrap 5 themes for modern-looking UI
+library(dplyr)          # Data manipulation: filter, arrange, mutate, etc.
+library(ggplot2)        # Grammar of graphics — all our charts
+library(plotly)         # Converts ggplot2 charts to interactive HTML widgets
+library(httr2)          # Modern HTTP client — used to call the Anthropic API
+library(jsonlite)       # Parse JSON responses from the API
+library(scales)         # Formatting helpers: dollar(), comma(), etc.
+library(stringr)        # String manipulation: str_detect, str_to_lower, etc.
+library(glue)           # String interpolation: glue("Hello {name}")
+library(reactable)      # Interactive sortable/filterable data tables
+
+# -----------------------------------------------------------------------------
+# 2. LOAD DATA
+# In production, this JSON is written by fetch_mrf_data.R on a weekly schedule.
+# During development, we source the helper script which defines the price data
+# directly in R so the app works without needing to run the full pipeline.
+# -----------------------------------------------------------------------------
+source("R/price_data.R")   # Defines: HOSPITALS, PRICE_DATA, SERVICES_DATA
+source("R/helpers.R")      # Defines: find_match(), fmt_dollar(), heat_color()
+
+# -----------------------------------------------------------------------------
+# 3. UI DEFINITION
+# bslib::page_navbar() creates a multi-tab Bootstrap 5 app.
+# Every input widget has an inputId — that's how the server reads it.
+# Every output placeholder has an outputId — that's how the server fills it.
+# -----------------------------------------------------------------------------
+ui <- page_navbar(
+  title = "ED Price Transparency — Hillsborough County, FL",
+  theme = bs_theme(
+    version = 5,
+    bootswatch = "flatly",   # Clean professional theme
+    primary = "#1D9E75",     # Teal green — matches our "lowest price" color
+    font_scale = 0.95
+  ),
+
+  # ── Tab 1: Search ──────────────────────────────────────────────────────────
+  nav_panel(
+    title = "Search",
+    icon = icon("magnifying-glass"),
+
+    layout_sidebar(
+      # LEFT SIDEBAR: search controls
+      sidebar = sidebar(
+        width = 300,
+        open = TRUE,
+
+        h5("Find ED prices by symptom", class = "mt-2 mb-3"),
+
+        # Free-text symptom input
+        # inputId = "symptom_input" → server reads input$symptom_input
+        textInput(
+          inputId = "symptom_input",
+          label   = "Describe your symptom",
+          placeholder = "e.g. chest pain, broken arm..."
+        ),
+
+        # Search button
+        # observeEvent(input$search_btn, ...) fires when clicked
+        actionButton(
+          inputId = "search_btn",
+          label   = "Search prices",
+          class   = "btn-primary w-100 mb-3",
+          icon    = icon("search")
+        ),
+
+        hr(),
+        p("Common conditions:", class = "text-muted small mb-2"),
+
+        # Quick-select buttons — each calls updateTextInput() + click search
+        # These are rendered as a set of small action buttons
+        div(
+          class = "d-flex flex-wrap gap-1",
+          actionButton("qs_chest",   "Chest pain",    class = "btn-outline-secondary btn-sm"),
+          actionButton("qs_arm",     "Broken arm",    class = "btn-outline-secondary btn-sm"),
+          actionButton("qs_head",    "Headache",      class = "btn-outline-secondary btn-sm"),
+          actionButton("qs_ab",      "Abdominal pain",class = "btn-outline-secondary btn-sm"),
+          actionButton("qs_breath",  "SOB",           class = "btn-outline-secondary btn-sm"),
+          actionButton("qs_lac",     "Laceration",    class = "btn-outline-secondary btn-sm"),
+          actionButton("qs_kidney",  "Kidney stone",  class = "btn-outline-secondary btn-sm")
+        ),
+
+        hr(),
+
+        # Sort control for the hospital table
+        radioButtons(
+          inputId  = "sort_by",
+          label    = "Sort hospitals by",
+          choices  = c(
+            "Cash price (low→high)"  = "cash",
+            "Gross charge (low→high)"= "gross",
+            "Distance (near→far)"    = "distance"
+          ),
+          selected = "cash"
+        ),
+
+        hr(),
+        # Status message — filled by server via output$status_text
+        uiOutput("status_text")
+      ),
+
+      # MAIN PANEL: results
+      # uiOutput() is a placeholder filled dynamically by the server.
+      # When nothing has been searched yet, we show a welcome message.
+      uiOutput("results_panel")
+    )
+  ),
+
+  # ── Tab 2: Compare ─────────────────────────────────────────────────────────
+  nav_panel(
+    title = "Compare",
+    icon  = icon("chart-bar"),
+
+    # Only show charts after a search has been performed.
+    # conditionalPanel() uses JavaScript to show/hide based on a condition.
+    # input.search_btn > 0 means the button has been clicked at least once.
+    conditionalPanel(
+      condition = "input.search_btn > 0",
+
+      layout_columns(
+        col_widths = c(12),
+
+        card(
+          card_header("Price comparison — all hospitals"),
+          card_body(
+            # radioGroupButtons let user switch chart metric without re-searching
+            radioButtons(
+              inputId  = "chart_metric",
+              label    = "Show",
+              choices  = c(
+                "Cash price"      = "cash",
+                "Gross charge"    = "gross",
+                "Min negotiated"  = "min_neg",
+                "Max negotiated"  = "max_neg"
+              ),
+              selected  = "cash",
+              inline    = TRUE
+            ),
+            # plotlyOutput() renders an interactive Plotly chart
+            plotlyOutput("bar_chart", height = "380px")
+          )
+        ),
+
+        card(
+          card_header("Cost breakdown by service"),
+          card_body(plotlyOutput("stack_chart", height = "320px"))
+        )
+      )
+    ),
+
+    # Show placeholder when no search yet
+    conditionalPanel(
+      condition = "input.search_btn == 0",
+      div(
+        class = "text-center text-muted mt-5 pt-5",
+        icon("magnifying-glass", style = "font-size:2rem"),
+        h5("Search a symptom on the Search tab to see charts", class = "mt-3")
+      )
+    )
+  ),
+
+  # ── Tab 3: All Conditions Heatmap ──────────────────────────────────────────
+  nav_panel(
+    title = "All conditions",
+    icon  = icon("table"),
+
+    card(
+      card_header("Cash price heatmap — all conditions × all hospitals"),
+      card_body(
+        p("Green = lower cost, orange = higher cost within each condition row.",
+          class = "text-muted small"),
+        reactableOutput("heatmap_table")
+      )
+    )
+  ),
+
+  # ── Tab 4: About ───────────────────────────────────────────────────────────
+  nav_panel(
+    title = "About",
+    icon  = icon("circle-info"),
+
+    card(
+      card_body(
+        h4("About this tool"),
+        p("This app maps patient-reported symptoms to standardized billing codes
+           (CPT/HCPCS/DRG) using a generative AI model (Anthropic Claude), then
+           looks up the corresponding prices from each hospital's CMS-mandated
+           machine-readable file (MRF)."),
+        h5("Data sources"),
+        tags$ul(
+          tags$li("CMS Hospital Price Transparency MRFs (45 CFR Part 180)"),
+          tags$li("Anthropic Claude API — symptom-to-billing-code mapping"),
+          tags$li("Refreshed weekly via automated GitHub Actions pipeline")
+        ),
+        h5("Hospitals covered"),
+        tags$ul(lapply(HOSPITALS$name, tags$li)),
+        hr(),
+        p(class = "text-muted small",
+          "Prices shown are standard charges from hospital machine-readable files.
+           Your actual cost depends on insurance coverage, deductible, and
+           specific services rendered. This tool is for informational purposes
+           only and does not constitute medical or financial advice.
+           In a medical emergency, always call 911.")
+      )
+    )
+  )
+)
+
+# -----------------------------------------------------------------------------
+# 4. SERVER DEFINITION
+# The server function receives input (what the user does) and writes to output
+# (what the user sees). reactive() and reactiveVal() store shared state.
+# observeEvent() runs code when a specific input changes.
+# -----------------------------------------------------------------------------
+server <- function(input, output, session) {
+
+  # ── 4a. Reactive state ─────────────────────────────────────────────────────
+  # reactiveVal() creates a mutable variable that triggers re-renders
+  # when it changes. Think of it as useState() in React.
+
+  current_key    <- reactiveVal(NULL)   # Which condition is currently searched
+  current_data   <- reactiveVal(NULL)   # The full data for that condition
+  search_status  <- reactiveVal("idle") # "idle" | "loading" | "ok" | "error"
+  status_message <- reactiveVal("Enter a symptom to get started")
+
+  # ── 4b. Quick-select buttons ───────────────────────────────────────────────
+  # Each observeEvent() fires when its button is clicked.
+  # updateTextInput() programmatically changes the text field.
+  # Then we simulate a search by triggering the main search logic.
+
+  quick_searches <- list(
+    qs_chest  = "chest pain",
+    qs_arm    = "broken arm fracture",
+    qs_head   = "severe headache migraine",
+    qs_ab     = "abdominal pain stomach",
+    qs_breath = "shortness of breath",
+    qs_lac    = "laceration cut wound",
+    qs_kidney = "kidney stone urinary pain"
+  )
+
+  # We use lapply to avoid copy-pasting the same observeEvent 7 times.
+  # local() is needed to capture btn_id correctly inside the loop —
+  # without it, all observers would share the same btn_id reference (the last one).
+  lapply(names(quick_searches), function(btn_id) {
+    local({
+      btn  <- btn_id
+      term <- quick_searches[[btn_id]]
+      observeEvent(input[[btn]], {
+        updateTextInput(session, "symptom_input", value = term)
+        # shinyjs would let us click a button programmatically,
+        # but instead we trigger the search logic directly:
+        run_search(term)
+      }, ignoreInit = TRUE)
+    })
+  })
+
+  # ── 4c. Main search button ─────────────────────────────────────────────────
+  observeEvent(input$search_btn, {
+    req(nchar(trimws(input$symptom_input)) > 0)  # req() stops if input is empty
+    run_search(input$symptom_input)
+  })
+
+  # ── 4d. Search logic (shared between button click and quick-selects) ────────
+  # This is a regular function, not a reactive — it's called imperatively.
+  run_search <- function(term) {
+    search_status("loading")
+    status_message(glue("Mapping \"{term}\" to billing codes..."))
+
+    # find_match() is defined in R/helpers.R — it does fuzzy keyword matching
+    # against our known condition keys
+    matched_key <- find_match(str_to_lower(trimws(term)))
+
+    if (!is.null(matched_key)) {
+      # We found a match in our local dataset
+      current_key(matched_key)
+      current_data(PRICE_DATA[[matched_key]])
+      search_status("ok")
+      status_message(glue("Showing prices for: {PRICE_DATA[[matched_key]]$desc}"))
+    } else {
+      # No local match — call Claude API to identify billing codes
+      status_message("Asking Claude to identify billing codes...")
+      claude_result <- call_claude_api(term)
+
+      if (!is.null(claude_result)) {
+        current_key("_custom")
+        current_data(claude_result)
+        search_status("ok")
+        status_message("Claude identified billing codes — showing estimated MRF prices")
+      } else {
+        search_status("error")
+        status_message("Could not map symptom. Try a different description or use a quick-select button.")
+      }
+    }
+  }
+
+  # ── 4e. Claude API call ────────────────────────────────────────────────────
+  # httr2 is the modern R HTTP package. The pipeline is:
+  # request() → req_headers() → req_body_json() → req_perform() → resp_body_json()
+  call_claude_api <- function(symptom) {
+    api_key <- Sys.getenv("ANTHROPIC_API_KEY")
+
+    # If no API key is set, return NULL gracefully rather than crashing
+    if (nchar(api_key) == 0) {
+      warning("ANTHROPIC_API_KEY not set — Claude API call skipped")
+      return(NULL)
+    }
+
+    prompt <- glue(
+      'Patient presents to an ED with: "{symptom}". ',
+      'Identify the most likely CPT/HCPCS codes and MS-DRG. ',
+      'Respond ONLY with valid JSON, no other text: ',
+      '{{"description":"...","codes":["CPT XXXXX"],"codeLabels":["..."],"notFound":false}}'
+    )
+
+    # tryCatch() prevents an API error from crashing the whole app
+    result <- tryCatch({
+      resp <- request("https://api.anthropic.com/v1/messages") |>
+        req_headers(
+          "Content-Type"      = "application/json",
+          "x-api-key"         = api_key,
+          "anthropic-version" = "2023-06-01"
+        ) |>
+        req_body_json(list(
+          model      = "claude-sonnet-4-20250514",
+          max_tokens = 600L,
+          messages   = list(
+            list(role = "user", content = prompt)
+          )
+        )) |>
+        req_perform()
+
+      body    <- resp_body_json(resp)
+      raw_txt <- body$content[[1]]$text
+
+      # Strip markdown code fences if Claude wrapped the JSON in ```json ... ```
+      clean <- str_remove_all(raw_txt, "```json|```")
+      parsed <- fromJSON(clean)
+
+      if (isTRUE(parsed$notFound)) return(NULL)
+
+      # Build a data structure matching our PRICE_DATA format
+      # with placeholder prices (real prices would come from MRF lookup by code)
+      list(
+        desc       = parsed$description,
+        codes      = parsed$codes,
+        codeLabels = parsed$codeLabels,
+        prices     = build_placeholder_prices(),
+        services   = list()
+      )
+    }, error = function(e) {
+      message("Claude API error: ", e$message)
+      NULL
+    })
+
+    result
+  }
+
+  # ── 4f. Status text output ─────────────────────────────────────────────────
+  output$status_text <- renderUI({
+    status <- search_status()
+    msg    <- status_message()
+
+    icon_name <- switch(status,
+      idle    = "circle-info",
+      loading = "spinner",
+      ok      = "circle-check",
+      error   = "circle-xmark"
+    )
+    color <- switch(status,
+      idle    = "text-muted",
+      loading = "text-warning",
+      ok      = "text-success",
+      error   = "text-danger"
+    )
+
+    div(
+      class = glue("small {color} d-flex align-items-center gap-2"),
+      if (status == "loading")
+        tags$i(class = "fa fa-spinner fa-spin")
+      else
+        icon(icon_name),
+      msg
+    )
+  })
+
+  # ── 4g. Results panel ──────────────────────────────────────────────────────
+  output$results_panel <- renderUI({
+    d <- current_data()
+
+    # req() is Shiny's way of saying "stop here if this is NULL"
+    # It prevents errors when the app first loads before any search
+    if (is.null(d)) {
+      return(
+        div(
+          class = "text-center text-muted mt-5 pt-5",
+          icon("hospital", style = "font-size:2.5rem"),
+          h5("Search a symptom to compare ED prices", class = "mt-3"),
+          p("Powered by CMS hospital price transparency data", class = "small")
+        )
+      )
+    }
+
+    # Build the results UI dynamically
+    tagList(
+      # Billing codes row
+      div(
+        class = "mb-3",
+        p("Billing codes identified:", class = "text-muted small mb-1"),
+        div(
+          class = "d-flex flex-wrap gap-1",
+          lapply(seq_along(d$codes), function(i) {
+            span(
+              class = "badge bg-info-subtle text-info-emphasis border border-info-subtle font-monospace",
+              d$codes[i],
+              if (!is.null(d$codeLabels[i]))
+                span(class = "ms-1 fw-normal opacity-75 font-sans", d$codeLabels[i])
+            )
+          })
+        )
+      ),
+
+      # Summary metrics row
+      layout_columns(
+        col_widths = c(4, 4, 4),
+        value_box(
+          title    = "Lowest cash price",
+          value    = fmt_dollar(min(sapply(d$prices, `[[`, "cash"))),
+          showcase = icon("circle-check"),
+          theme    = "success",
+          p(get_hospital_name(d, "cash", "min"), class = "small opacity-75")
+        ),
+        value_box(
+          title    = "Highest cash price",
+          value    = fmt_dollar(max(sapply(d$prices, `[[`, "cash"))),
+          showcase = icon("circle-exclamation"),
+          theme    = "danger",
+          p(get_hospital_name(d, "cash", "max"), class = "small opacity-75")
+        ),
+        value_box(
+          title    = "Potential savings",
+          value    = fmt_dollar(
+            max(sapply(d$prices, `[[`, "cash")) -
+              min(sapply(d$prices, `[[`, "cash"))
+          ),
+          showcase = icon("piggy-bank"),
+          theme    = "primary",
+          p("by choosing lowest vs. highest", class = "small opacity-75")
+        )
+      ),
+
+      # Hospital cards
+      h6("Hospitals — sorted by selected option", class = "mt-3 mb-2 text-muted"),
+      uiOutput("hospital_cards"),
+
+      # Disclaimer
+      div(
+        class = "alert alert-warning small mt-3",
+        tags$strong("Note: "),
+        "Prices from CMS machine-readable files — standard charges and cash/self-pay prices.
+         Your actual cost depends on insurance, deductible, and services received.
+         Not medical advice. In an emergency, call 911."
+      )
+    )
+  })
+
+  # ── 4h. Hospital cards ─────────────────────────────────────────────────────
+  output$hospital_cards <- renderUI({
+    d <- current_data()
+    req(d)
+
+    # Sort hospitals according to the radio button selection
+    sorted_hosps <- switch(input$sort_by,
+      cash     = HOSPITALS |> arrange(sapply(id, function(i) d$prices[[i]]$cash)),
+      gross    = HOSPITALS |> arrange(sapply(id, function(i) d$prices[[i]]$gross)),
+      distance = HOSPITALS |> arrange(distance_mi)
+    )
+
+    # The minimum cash price across all hospitals — used to highlight the best
+    min_cash <- min(sapply(d$prices, `[[`, "cash"))
+
+    # Build a card for each hospital
+    # lapply() maps over rows of a data frame — equivalent to a for loop
+    # but returns a list (which tagList() needs)
+    cards <- lapply(seq_len(nrow(sorted_hosps)), function(i) {
+      h      <- sorted_hosps[i, ]
+      p      <- d$prices[[h$id]]
+      is_best <- p$cash == min_cash
+
+      card(
+        class = if (is_best) "border-success mb-2" else "mb-2",
+        card_body(
+          class = "py-2",
+          div(
+            class = "d-flex justify-content-between align-items-start",
+
+            # Left: name, meta
+            div(
+              div(
+                class = "fw-semibold",
+                h$name,
+                if (is_best)
+                  span(class = "ms-2 badge bg-success-subtle text-success-emphasis small fw-normal",
+                       "✓ lowest cash price")
+              ),
+              div(
+                class = "text-muted small d-flex gap-2 flex-wrap mt-1",
+                span(glue("{h$distance_mi} mi")),
+                span(
+                  class = if (h$badge == "trauma") "badge bg-danger-subtle text-danger-emphasis"
+                          else "badge bg-info-subtle text-info-emphasis",
+                  h$badge_text
+                ),
+                tags$a(
+                  href   = h$mrf_url,
+                  target = "_blank",
+                  class  = "text-info",
+                  "MRF ↗"
+                )
+              )
+            ),
+
+            # Right: prices
+            div(
+              class = "d-flex gap-3 text-end",
+              div(
+                div(class = "text-muted", style = "font-size:10px", "Cash"),
+                div(class = "fw-semibold text-success", fmt_dollar(p$cash))
+              ),
+              div(
+                div(class = "text-muted", style = "font-size:10px", "Gross"),
+                div(class = "fw-semibold", fmt_dollar(p$gross))
+              ),
+              div(
+                div(class = "text-muted", style = "font-size:10px", "Neg. range"),
+                div(class = "text-muted small",
+                    glue("{fmt_dollar(p$min_neg)}–{fmt_dollar(p$max_neg)}"))
+              )
+            )
+          ),
+
+          # Itemized services (if available for this condition)
+          if (length(d$services) > 0) {
+            svc_tbl <- lapply(d$services, function(s) {
+              data.frame(
+                Service = s$name,
+                Code    = s$code,
+                `Gross charge` = fmt_dollar(s$prices[[h$id]]),
+                check.names = FALSE
+              )
+            }) |> bind_rows()
+
+            div(
+              class = "mt-2 pt-2 border-top",
+              style = "font-size:12px",
+              renderTable(svc_tbl, striped = TRUE, hover = TRUE,
+                          bordered = FALSE, spacing = "xs", align = "lrc")
+            )
+          }
+        )
+      )
+    })
+
+    do.call(tagList, cards)
+  })
+
+  # ── 4i. Bar chart (Compare tab) ─────────────────────────────────────────────
+  output$bar_chart <- renderPlotly({
+    d <- current_data()
+    req(d)
+
+    metric_col <- input$chart_metric
+    metric_label <- switch(metric_col,
+      cash    = "Cash / self-pay price",
+      gross   = "Gross charge",
+      min_neg = "Min negotiated",
+      max_neg = "Max negotiated"
+    )
+
+    # Build a tidy data frame for ggplot
+    # purrr::map_dfr would also work; here we use base lapply + bind_rows
+    chart_df <- lapply(names(d$prices), function(hid) {
+      h <- HOSPITALS |> filter(id == hid)
+      p <- d$prices[[hid]]
+      data.frame(
+        hospital = h$short_name,
+        value    = p[[metric_col]],
+        stringsAsFactors = FALSE
+      )
+    }) |>
+      bind_rows() |>
+      # Sort bars by value (lowest first) for easy comparison
+      arrange(value) |>
+      mutate(hospital = factor(hospital, levels = hospital))
+
+    p <- ggplot(chart_df, aes(x = hospital, y = value,
+                               fill = (value == min(value)),
+                               text = glue("{hospital}\n{metric_label}: {fmt_dollar(value)}"))) +
+      geom_col(width = 0.65, show.legend = FALSE) +
+      scale_fill_manual(values = c("TRUE" = "#1D9E75", "FALSE" = "#B4B2A9")) +
+      scale_y_continuous(labels = label_dollar(scale = 1/1000, suffix = "k")) +
+      labs(x = NULL, y = NULL, title = metric_label) +
+      theme_minimal(base_size = 12) +
+      theme(
+        axis.text.x  = element_text(angle = 30, hjust = 1, size = 10),
+        panel.grid.major.x = element_blank(),
+        plot.title   = element_text(size = 13, face = "plain")
+      )
+
+    # ggplotly() converts ggplot to interactive Plotly
+    # tooltip = "text" uses our custom glue() text instead of default labels
+    ggplotly(p, tooltip = "text") |>
+      layout(hoverlabel = list(bgcolor = "white"))
+  })
+
+  # ── 4j. Stacked bar chart (breakdown by service) ───────────────────────────
+  output$stack_chart <- renderPlotly({
+    d <- current_data()
+    req(d)
+
+    # If no itemized services, show a message instead of an empty chart
+    if (length(d$services) == 0) {
+      return(plotly_empty() |>
+               layout(title = list(text = "Itemized breakdown not available for this condition",
+                                   font = list(size = 13))))
+    }
+
+    palette <- c("#534AB7","#1D9E75","#D85A30","#378ADD","#BA7517","#D4537E","#639922")
+
+    # Build long-format data frame for stacked bars
+    # One row per (hospital × service) combination
+    stack_df <- lapply(seq_along(d$services), function(si) {
+      svc <- d$services[[si]]
+      lapply(HOSPITALS$id, function(hid) {
+        h <- HOSPITALS |> filter(id == hid)
+        data.frame(
+          hospital = h$short_name,
+          service  = svc$name,
+          value    = svc$prices[[hid]],
+          color    = palette[(si - 1) %% length(palette) + 1],
+          stringsAsFactors = FALSE
+        )
+      }) |> bind_rows()
+    }) |> bind_rows()
+
+    # Build Plotly stacked bar directly (ggplot stacking with plotly can be finicky)
+    plot_ly(
+      data   = stack_df,
+      x      = ~hospital,
+      y      = ~value,
+      color  = ~service,
+      colors = palette,
+      type   = "bar",
+      text   = ~glue("{service}: {fmt_dollar(value)}"),
+      hovertemplate = "%{text}<extra></extra>"
+    ) |>
+      layout(
+        barmode = "stack",
+        xaxis   = list(title = "", tickangle = -30),
+        yaxis   = list(title = "", tickformat = "$,.0f"),
+        legend  = list(orientation = "h", y = -0.25),
+        margin  = list(b = 100)
+      )
+  })
+
+  # ── 4k. Heatmap table (All Conditions tab) ─────────────────────────────────
+  output$heatmap_table <- renderReactable({
+    # Build a wide data frame: one row per condition, one column per hospital
+    conditions <- names(PRICE_DATA)[names(PRICE_DATA) != "_custom"]
+
+    heat_df <- lapply(conditions, function(key) {
+      d <- PRICE_DATA[[key]]
+      row <- list(Condition = d$label)
+      for (hid in HOSPITALS$id) {
+        h <- HOSPITALS |> filter(id == hid)
+        row[[h$short_name]] <- d$prices[[hid]]$cash
+      }
+      as.data.frame(row, check.names = FALSE)
+    }) |>
+      bind_rows() |>
+      # Sort by average cash price descending (most expensive conditions on top)
+      arrange(desc(rowMeans(select(_, -Condition))))
+
+    hosp_cols <- HOSPITALS$short_name
+
+    # reactable() renders a feature-rich interactive table
+    # The colDef() lets us style each column individually
+    reactable(
+      heat_df,
+      defaultPageSize = 20,
+      highlight        = TRUE,
+      striped          = FALSE,
+      columns = c(
+        list(
+          Condition = colDef(
+            name    = "Condition",
+            minWidth = 140,
+            style   = list(fontWeight = "500")
+          )
+        ),
+        # Build column definitions for each hospital dynamically
+        setNames(
+          lapply(hosp_cols, function(col_name) {
+            colDef(
+              name    = col_name,
+              minWidth = 90,
+              align   = "right",
+              # style is a JS function that colors each cell based on its value
+              # relative to the row min/max
+              style   = JS(glue("
+                function(rowInfo, column) {{
+                  var hospCols = {jsonlite::toJSON(hosp_cols)};
+                  var vals = hospCols.map(function(c) {{ return rowInfo.row[c]; }});
+                  var min = Math.min.apply(null, vals);
+                  var max = Math.max.apply(null, vals);
+                  var val = rowInfo.row['{col_name}'];
+                  var t = (val - min) / (max - min);
+                  var bg, color;
+                  if (t < 0.5) {{
+                    var r = Math.round(225 + (185 - 225) * t * 2);
+                    var g = Math.round(245 + (218 - 245) * t * 2);
+                    var b = Math.round(238 + (201 - 238) * t * 2);
+                    bg = 'rgb(' + r + ',' + g + ',' + b + ')';
+                    color = t < 0.15 ? '#085041' : 'inherit';
+                  }} else {{
+                    var tt = (t - 0.5) * 2;
+                    var r = Math.round(250 + (245 - 250) * tt);
+                    var g = Math.round(236 + (196 - 236) * tt);
+                    var b = Math.round(231 + (179 - 231) * tt);
+                    bg = 'rgb(' + r + ',' + g + ',' + b + ')';
+                    color = t > 0.85 ? '#712B13' : 'inherit';
+                  }}
+                  return {{ background: bg, color: color, fontWeight: t < 0.15 || t > 0.85 ? '500' : 'normal' }};
+                }}
+              ")),
+              cell = function(value) {
+                fmt_dollar(value)
+              }
+            )
+          }),
+          hosp_cols
+        )
+      )
+    )
+  })
+}
+
+# -----------------------------------------------------------------------------
+# 5. RUN THE APP
+# shinyApp() wires up the ui and server objects defined above.
+# When you run this file in RStudio (Cmd+Shift+Enter or click "Run App"),
+# Shiny starts a local web server and opens the app in your browser.
+# -----------------------------------------------------------------------------
+shinyApp(ui = ui, server = server)
