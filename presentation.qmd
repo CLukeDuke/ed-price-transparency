@@ -1,0 +1,525 @@
+---
+title: "ED Price Transparency Tool"
+subtitle: "Hillsborough County, FL"
+author: "GLHLTH 562 · Duke University"
+date: today
+format:
+  revealjs:
+    theme: [default, custom.scss]
+    slide-number: true
+    progress: true
+    transition: fade
+    background-transition: fade
+    highlight-style: github
+    code-line-numbers: false
+    footer: "GLHLTH 562 · ED Price Transparency · Hillsborough County, FL"
+    width: 1280
+    height: 720
+    smaller: true
+    scrollable: false
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+# What problem does this product address? {background-color="#0F6E56"}
+
+---
+
+## The problem {background-color="#1a1a2e"}
+
+::: {.columns}
+::: {.column width="55%"}
+### Emergency care is the most opaque healthcare purchase in America
+
+A chest pain workup in Hillsborough County can cost
+
+::: {.fragment}
+**$3,060** at South Florida Baptist
+:::
+::: {.fragment}
+**$4,390** at AdventHealth
+:::
+::: {.fragment}
+for **identical services** — a difference of **$1,330**
+:::
+::: {.fragment}
+<br>
+Patients have no way to know this **before they go.**
+:::
+:::
+
+::: {.column width="45%"}
+::: {.fragment}
+| Hospital | Cash price |
+|----------|-----------|
+| Tampa General | $4,118 |
+| St. Joseph's | $3,640 |
+| AdventHealth | **$4,390** |
+| HCA Brandon | $3,520 |
+| HCA S. Tampa | $3,710 |
+| HCA W. Tampa | $3,540 |
+| S. FL Baptist | **$3,060** |
+
+: Cash prices — chest pain workup {.striped}
+:::
+:::
+:::
+
+---
+
+## Why does this gap exist? {background-color="#1a1a2e"}
+
+::: {.columns}
+::: {.column width="50%"}
+**The data is public — but unusable**
+
+Since 2021, CMS requires all hospitals to publish machine-readable files (MRFs) of every charge under **45 CFR Part 180**
+
+But for a typical patient these files are:
+
+::: {.fragment}
+- Up to **2 GB** per hospital
+:::
+::: {.fragment}
+- Full of cryptic codes: `CPT 84484`
+:::
+::: {.fragment}
+- Impossible to compare across hospitals
+:::
+::: {.fragment}
+- No plain-language explanations
+:::
+:::
+
+::: {.column width="50%"}
+::: {.fragment}
+### Who this tool is for
+
+- **Uninsured patients** choosing between EDs on cost
+- **Underinsured patients** with high deductibles
+- **Anyone** who wants to understand their bill before or after a visit
+- **Health policy researchers** studying price variation in Tampa Bay
+:::
+:::
+:::
+
+---
+
+## Our solution {background-color="#065A82"}
+
+::: {.r-fit-text}
+Turn a symptom into a price comparison in under 5 seconds
+:::
+
+::: {.columns style="margin-top: 1rem;"}
+::: {.column width="22%"}
+::: {.fragment}
+**1. Type a symptom**
+
+"chest pain"
+:::
+:::
+::: {.column width="5%"}
+→
+:::
+::: {.column width="22%"}
+::: {.fragment}
+**2. Claude maps to billing codes**
+
+CPT 99285, 93010, 84484
+:::
+:::
+::: {.column width="5%"}
+→
+:::
+::: {.column width="22%"}
+::: {.fragment}
+**3. Prices from 7 hospital MRFs**
+
+Updated weekly automatically
+:::
+:::
+::: {.column width="5%"}
+→
+:::
+::: {.column width="19%"}
+::: {.fragment}
+**4. Ranked results**
+
+With your insurance and ZIP
+:::
+:::
+:::
+
+---
+
+# Live demo {background-color="#0F6E56"}
+
+::: {style="text-align: center; color: white; margin-top: 2rem; font-size: 1.4rem;"}
+**https://clukeduke.shinyapps.io/ed-price-transparency/**
+:::
+
+---
+
+## What the app does — Search tab
+
+::: {.columns}
+::: {.column width="50%"}
+**User inputs:**
+
+- Free-text symptom search
+- Quick-select buttons for 7 common conditions
+- ZIP code for live distance calculation
+- Distance slider to filter far hospitals
+- Insurance plan selector (8 Florida insurers)
+- Sort by cash price, gross charge, or distance
+
+**GenAI in action:**
+
+When a symptom is not in the local dataset, the app calls the **Anthropic Claude API** which returns CPT/HCPCS/DRG codes as structured JSON
+:::
+
+::: {.column width="50%"}
+**What you see:**
+
+- Three value boxes: lowest price, highest price, potential savings
+- Sortable hospital cards showing:
+  - Your estimated price (cash or insurer rate)
+  - Gross charge
+  - Negotiated rate range
+  - Distance from your ZIP
+- Itemized service breakdown per hospital
+- **Hover tooltips** explaining every billing code in plain language
+:::
+:::
+
+---
+
+## What the app does — Map, Compare, Calculator
+
+::: {.columns}
+::: {.column width="33%"}
+### 🗺️ Map tab
+
+Interactive **Leaflet map** of all 7 Hillsborough County EDs
+
+- Click any pin for address and price
+- Prices update when you change insurer or search a new condition
+:::
+
+::: {.column width="33%"}
+### 📊 Compare tab
+
+Two chart types for price comparison:
+
+- **Dot plot** — shows cash price AND gross charge per hospital
+- **Bar chart** — traditional view
+
+Two chart types for cost breakdown:
+
+- **Treemap** — shows which services dominate the bill
+- **Stacked bars** — traditional breakdown
+:::
+
+::: {.column width="33%"}
+### 🧮 Calculator tab
+
+Out-of-pocket estimator:
+
+- Annual deductible
+- Amount already met
+- Coinsurance percentage
+- Out-of-pocket maximum
+
+Calculates what you **actually pay** after insurance
+:::
+:::
+
+---
+
+## Treatment definitions
+
+::: {.columns}
+::: {.column width="50%"}
+**The problem within the problem:**
+
+Even if a patient finds the price data, they still see `CPT 84484 — Troponin I` and have no idea what it means.
+
+**The solution:**
+
+Every billing code badge and service line item has a hover tooltip with:
+
+1. **What it is** — full name
+2. **What it does** — plain-language description
+3. **Why you see this** — why it appears on an ED bill
+:::
+
+::: {.column width="50%"}
+**Example — Troponin I:**
+
+> *Measures a protein released into the bloodstream when heart muscle cells are damaged. Elevated levels strongly indicate a heart attack. Results typically return in 1–2 hours.*
+
+> **Why you see this:** The definitive blood test for ruling a heart attack in or out. Cannot be skipped for a serious chest pain workup — you may be billed for it twice if a repeat draw is ordered.
+
+20 treatments defined across all 7 conditions
+:::
+:::
+
+---
+
+## Three capabilities — rubric requirements met
+
+::: {.columns}
+::: {.column width="33%"}
+### 🔌 API integration
+
+- CMS MRFs fetched programmatically via `httr2`
+- Anthropic Claude API called at query time
+- No manual downloads ever required
+- Hospitals legally prohibited from blocking automated access under CMS rules
+:::
+
+::: {.column width="33%"}
+### 🤖 GenAI in pipeline
+
+- Claude performs **real clinical classification**
+- Symptom → structured JSON with CPT/HCPCS/DRG codes
+- Degrades gracefully when API unavailable
+- The app cannot function without it
+:::
+
+::: {.column width="33%"}
+### ⚙️ Automation
+
+- GitHub Actions runs **every Monday 6 AM UTC**
+- Re-downloads all 7 hospital MRFs
+- Filters to ED-relevant codes
+- Commits updated prices to repo
+- Uploads processing log as artifact
+:::
+:::
+
+---
+
+# Key design decisions and trade-offs {background-color="#065A82"}
+
+---
+
+## Decision 1: Static data + live Claude API
+
+::: {.columns}
+::: {.column width="50%"}
+**What we chose:**
+
+Pre-process MRF data into a static JSON file via a weekly pipeline. Call Claude API only for unknown symptoms at query time.
+
+**Why:**
+
+- Hospital MRF files are 100MB–2GB each
+- Downloading 7 files on every search would be unusably slow
+- Pre-processing keeps response time under 1 second
+- Claude handles the long tail of uncommon symptoms
+:::
+
+::: {.column width="50%"}
+**The trade-off:**
+
+Prices are up to 7 days old rather than real-time.
+
+For hospital pricing data that is updated annually, this is acceptable — hospital prices don't change week to week.
+
+**What we gave up:**
+
+Real-time MRF fetching would guarantee prices are always current. A production version with server-side caching could bridge this gap.
+:::
+:::
+
+---
+
+## Decision 2: Payer multipliers instead of raw MRF payer data
+
+::: {.columns}
+::: {.column width="50%"}
+**What we chose:**
+
+Apply payer-specific multipliers to the cash price rather than parsing the full payer-by-plan rates from each MRF.
+
+```r
+get_payer_price <- function(base_cash, hosp_id, payer_id) {
+  if (payer_id == "cash") return(base_cash)
+  multiplier <- PAYER_MULTIPLIERS[[hosp_id]][[payer_id]]
+  round(base_cash * multiplier)
+}
+```
+:::
+
+::: {.column width="50%"}
+**Why:**
+
+Each MRF contains hundreds of inconsistent plan name variations per insurer across hospitals — normalizing these requires a separate NLP classification step.
+
+**The trade-off:**
+
+Multipliers give clinically reasonable estimates but are not exact. The disclaimer on every results page is essential.
+
+**What we gave up:**
+
+Exact negotiated rates per plan — the most valuable data in the MRF.
+:::
+:::
+
+---
+
+## Decision 3: Dot plot and treemap over bar charts
+
+::: {.columns}
+::: {.column width="50%"}
+**Why dot plot:**
+
+Bars imply the area matters — for prices, only the endpoint matters. The dot plot shows both cash price and gross charge with a connector line, making the gap between them the visual story.
+
+**Why treemap:**
+
+For abdominal pain, the CT scan is 60% of the total bill. A stacked bar obscures this. The treemap makes the CT scan rectangle dominate visually — the insight is immediate.
+:::
+
+::: {.column width="50%"}
+**The trade-off:**
+
+Dot plots are less familiar to general audiences than bar charts. Some users may need a moment to understand the encoding.
+
+**Solution:**
+
+We kept both chart types toggleable via a radio button. Users who prefer bar charts can switch — the dot plot is the default because it tells a better story.
+:::
+:::
+
+---
+
+# What we would improve with more time {background-color="#1a1a2e"}
+
+---
+
+## Improvement 1: Real payer-specific rates
+
+::: {.columns}
+::: {.column width="55%"}
+**What we have now:**
+
+Multipliers applied to cash price — reasonable estimates based on Florida market data
+
+**What we would build:**
+
+A proper MRF payer parsing pipeline that uses Claude to classify inconsistent plan names into standard insurer categories, then stores actual negotiated rates by insurer and hospital.
+
+**Why it matters:**
+
+The difference between "estimated UnitedHealthcare rate" and "actual UnitedHealthcare PPO negotiated rate at Tampa General" is the difference between a useful tool and a definitive one.
+:::
+
+::: {.column width="45%"}
+**Example of the problem:**
+
+Tampa General's MRF contains plan entries like:
+
+```
+United Healthcare Choice Plus
+UHC Choice
+UnitedHealthcare Options PPO
+UHC Navigate HMO
+United Choice Navigator
+```
+
+All referring to UnitedHealthcare but stored inconsistently. Claude could classify these reliably — we just ran out of time to build the pipeline.
+:::
+:::
+
+---
+
+## Improvement 2: Driving time + urgent care comparison
+
+::: {.columns}
+::: {.column width="50%"}
+### Driving time
+
+**What we have:** straight-line Haversine distance from ZIP centroid
+
+**What we would build:** Google Maps Distance Matrix API returning **driving time in minutes** — far more relevant for emergency care
+
+"8 miles" means nothing in an emergency. "14 minutes" is actionable.
+
+**Why we didn't:** requires Google Maps API key with billing enabled — cost risk for a class project.
+:::
+
+::: {.column width="50%"}
+### Urgent care comparison
+
+Many ED conditions can be treated at urgent care for a fraction of the cost:
+
+| Condition | ED cash | Urgent care |
+|-----------|---------|-------------|
+| Laceration | $1,185–$1,660 | $150–$300 |
+| Broken arm | $1,910–$2,640 | $200–$400 |
+| Headache | $2,440–$3,360 | $100–$200 |
+
+The most impactful price transparency intervention is "should you go to an ED at all?"
+:::
+:::
+
+---
+
+## Summary {background-color="#1a1a2e"}
+
+::: {.columns}
+::: {.column width="50%"}
+**What we built:**
+
+A working R Shiny app that turns a plain-language symptom into a ranked price comparison across 7 Hillsborough County EDs — with insurance filtering, distance filtering, out-of-pocket calculation, an interactive map, and plain-language treatment definitions
+
+**Three capabilities:**
+
+- ✅ API integration (CMS MRFs + Claude API)
+- ✅ GenAI in pipeline (symptom → billing codes)
+- ✅ Automation (GitHub Actions weekly refresh)
+:::
+
+::: {.column width="50%"}
+**The core insight:**
+
+The data was always public. The problem was never access — it was usability.
+
+::: {.fragment}
+A patient typing "chest pain" should not need to know what `CPT 84484` means.
+
+They should just see:
+
+**South Florida Baptist: $3,060**
+
+**AdventHealth: $4,390**
+
+**You could save $1,330 by driving 8 more miles.**
+:::
+:::
+:::
+
+---
+
+## {background-color="#0F6E56"}
+
+::: {.r-fit-text}
+Thank you
+:::
+
+::: {style="text-align: center; color: white; margin-top: 1.5rem;"}
+**Live app:** https://clukeduke.shinyapps.io/ed-price-transparency/
+
+**GitHub:** github.com/CLukeDuke/ed-price-transparency
+:::
+
+::: {style="text-align: center; color: rgba(255,255,255,0.75); margin-top: 1.5rem; font-size: 0.85rem;"}
+Built with R · Shiny · httr2 · leaflet · plotly · reactable · Anthropic Claude API
+
+CMS Hospital Price Transparency data (45 CFR Part 180) · Duke University GLHLTH 562
+:::
