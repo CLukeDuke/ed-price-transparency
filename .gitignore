@@ -1,0 +1,11 @@
+.Rproj.user
+.Rhistory
+.RData
+.httr-oauth
+.env
+*.env
+logs/
+data/raw/
+app_backup*.R
+*.csv.gz
+*.json.gz

@@ -1,0 +1,443 @@
+---
+title: "ED Price Transparency Tool"
+subtitle: "Making CMS hospital pricing data accessible to patients"
+author: "GLHLTH 562 · Duke University"
+date: today
+format:
+  revealjs:
+    theme: [default, custom.scss]
+    slide-number: true
+    progress: true
+    transition: fade
+    background-transition: fade
+    highlight-style: github
+    code-line-numbers: false
+    footer: "GLHLTH 562 · ED Price Transparency · Hillsborough County, FL"
+    logo: ""
+    width: 1280
+    height: 720
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+## The problem {background-color="#0F6E56"}
+
+::: {.columns}
+::: {.column width="55%"}
+### Emergency care is the most opaque healthcare purchase in America
+
+A chest pain workup in Hillsborough County can cost
+
+::: {.fragment}
+**$3,060** at one hospital
+:::
+::: {.fragment}
+**$4,390** at another — for identical services
+:::
+::: {.fragment .fade-in}
+<br>
+Patients have no way to know this before they go.
+:::
+:::
+
+::: {.column width="45%"}
+::: {.fragment}
+```
+Tampa General    $4,118
+St. Joseph's     $3,640
+AdventHealth     $4,390  ← highest
+HCA Brandon      $3,520
+HCA S. Tampa     $3,710
+HCA W. Tampa     $3,540
+S. FL Baptist    $3,060  ← lowest
+```
+*Cash prices for a chest pain workup*
+:::
+:::
+:::
+
+---
+
+## The data exists — but it's unusable {background-color="#1a1a2e"}
+
+::: {.columns}
+::: {.column width="50%"}
+**Since 2021**, CMS requires all hospitals to publish machine-readable files (MRFs) of every charge
+
+- Up to **2 GB** per file
+- Cryptic billing codes: `CPT 84484`
+- No plain-language descriptions
+- No way to compare across hospitals
+:::
+
+::: {.column width="50%"}
+::: {.fragment}
+### The gap we're bridging
+
+```
+Patient types:
+  "chest pain"
+       ↓
+Claude API maps to:
+  CPT 99285, CPT 93010,
+  CPT 84484, DRG 313
+       ↓
+App looks up prices in
+  7 hospital MRFs
+       ↓
+Patient sees ranked list
+  with real prices
+```
+:::
+:::
+:::
+
+---
+
+## What we built {background-color="#065A82"}
+
+::: {.r-fit-text}
+An interactive R Shiny app that turns a symptom into a price comparison
+:::
+
+::: {.columns style="margin-top: 1rem;"}
+::: {.column width="25%"}
+::: {.fragment}
+**🔍 Search**
+
+Free-text symptom input with Claude API billing code mapping
+:::
+:::
+::: {.column width="25%"}
+::: {.fragment}
+**🗺️ Map**
+
+Interactive Leaflet map of all 7 Hillsborough County EDs
+:::
+:::
+::: {.column width="25%"}
+::: {.fragment}
+**📊 Compare**
+
+Dot plots and treemaps showing price breakdowns
+:::
+:::
+::: {.column width="25%"}
+::: {.fragment}
+**🧮 Calculator**
+
+Out-of-pocket estimator with real insurance inputs
+:::
+:::
+:::
+
+---
+
+## Data pipeline {background-color="#1a1a2e"}
+
+```{mermaid}
+flowchart LR
+    A[User types symptom] --> B{find_match}
+    B -->|Known condition| C[Local MRF data]
+    B -->|Unknown| D[Claude API\nclaude-sonnet-4]
+    D --> E[Returns CPT/DRG\ncodes as JSON]
+    E --> C
+    C --> F[Render results\nSearch · Map · Charts · Calculator]
+    
+    G[GitHub Actions\nevery Monday] --> H[fetch_mrf_data.R]
+    H --> I[Download 7 hospital MRFs\nup to 2GB each]
+    I --> J[Filter to ED codes\nCPT · HCPCS · DRG]
+    J --> K[hillsborough_ed_prices.json]
+    K --> C
+
+    style A fill:#1D9E75,color:#fff
+    style D fill:#534AB7,color:#fff
+    style G fill:#D85A30,color:#fff
+    style F fill:#065A82,color:#fff
+```
+
+---
+
+## Three capabilities beyond user input
+
+::: {.columns}
+::: {.column width="33%"}
+### 🔌 API integration
+
+- CMS MRFs fetched programmatically at runtime
+- Anthropic Claude API called at query time
+- No manual CSV downloads
+- Hospitals legally prohibited from blocking automated access
+
+*45 CFR Part 180*
+:::
+
+::: {.column width="33%"}
+### 🤖 GenAI in pipeline
+
+- Claude performs **real clinical classification**
+- Symptom → CPT/HCPCS/DRG mapping
+- Structured JSON output
+- Degrades gracefully when API unavailable
+
+*Not cosmetic — the app cannot function without it*
+:::
+
+::: {.column width="33%"}
+### ⚙️ Automation
+
+- GitHub Actions workflow
+- Runs **every Monday 6 AM UTC**
+- Re-downloads all 7 hospital MRFs
+- Commits updated prices to repo
+- Uploads processing log as artifact
+
+*.github/workflows/mrf-refresh.yml*
+:::
+:::
+
+---
+
+## Key R packages
+
+::: {.columns}
+::: {.column width="50%"}
+
+| Package | Role |
+|---------|------|
+| `shiny` | Core app framework |
+| `bslib` | Bootstrap 5 UI components |
+| `httr2` | Claude API + MRF HTTP calls |
+| `jsonlite` | JSON parsing |
+| `leaflet` | Interactive hospital map |
+| `plotly` | Interactive charts |
+
+:::
+::: {.column width="50%"}
+
+| Package | Role |
+|---------|------|
+| `ggplot2` | Chart construction |
+| `reactable` | Heatmap + OOP table |
+| `dplyr` | Data manipulation |
+| `stringr` | Symptom matching |
+| `readr` | Large MRF CSV reading |
+| `logger` | Pipeline logging |
+
+:::
+:::
+
+---
+
+## Feature: ZIP code + distance filter
+
+::: {.columns}
+::: {.column width="55%"}
+**The problem:** All 7 hospitals always show equally — but a patient in Brandon has no reason to consider South Tampa hospitals first.
+
+**The solution:**
+
+1. User enters a ZIP code
+2. App looks up coordinates from a Hillsborough County ZIP table
+3. **Haversine formula** calculates straight-line distance to each hospital
+4. A slider filters out hospitals beyond a chosen radius
+
+```r
+haversine_distance <- function(lat1, lng1, lat2, lng2) {
+  R    <- 3958.8  # Earth radius in miles
+  phi1 <- lat1 * pi / 180
+  phi2 <- lat2 * pi / 180
+  dphi <- (lat2 - lat1) * pi / 180
+  dlng <- (lng2 - lng1) * pi / 180
+  a    <- sin(dphi/2)^2 +
+          cos(phi1) * cos(phi2) * sin(dlng/2)^2
+  2 * R * asin(sqrt(a))
+}
+```
+:::
+
+::: {.column width="45%"}
+::: {.fragment}
+**Result:** Entering ZIP `33511` (Brandon) and filtering to 15 miles automatically surfaces the two nearest hospitals — no manual sorting needed.
+:::
+:::
+:::
+
+---
+
+## Feature: Insurance payer filter
+
+::: {.columns}
+::: {.column width="50%"}
+**The problem:** "Cash price" is only useful for the uninsured. Most patients have insurance — but what does *their* plan actually pay?
+
+**The solution:**
+- Dropdown with 8 Florida insurers: Florida Blue, Aetna, UnitedHealthcare, Cigna, Humana, Medicaid, Medicare
+- `get_payer_price()` applies payer-specific multipliers derived from de-identified MRF negotiated rate ranges
+- Prices update instantly across all cards, value boxes, and charts
+
+```r
+get_payer_price <- function(base_cash, hosp_id, payer_id) {
+  if (payer_id == "cash") return(base_cash)
+  multiplier <- PAYER_MULTIPLIERS[[hosp_id]][[payer_id]]
+  round(base_cash * multiplier)
+}
+```
+:::
+
+::: {.column width="50%"}
+::: {.fragment}
+**What you see:**
+
+Medicare rates are **30-35% below** cash prices
+
+UnitedHealthcare rates are **45-55% above** cash prices
+
+The difference in what insurers pay at Tampa General for a chest pain workup:
+
+- Medicare: ~$2,800
+- Cash: $4,118
+- UnitedHealthcare: ~$6,200
+:::
+:::
+:::
+
+---
+
+## Feature: Out-of-pocket calculator
+
+**The most actionable feature — estimates what a patient actually pays**
+
+::: {.columns}
+::: {.column width="45%"}
+**Inputs:**
+
+- Insurance plan selection
+- Annual deductible ($)
+- Amount already met toward deductible ($)
+- Coinsurance percentage after deductible (%)
+- Out-of-pocket maximum ($)
+:::
+
+::: {.column width="55%"}
+**The calculation:**
+
+```r
+deduct_remaining <- max(0, deductible - deductible_met)
+
+# Step 1: apply remaining deductible
+deduct_applied <- min(base_price, deduct_remaining)
+after_deduct   <- base_price - deduct_applied
+
+# Step 2: apply coinsurance to remainder
+coins_applied  <- after_deduct * coinsurance
+
+# Step 3: cap at out-of-pocket maximum
+total_oop  <- deduct_applied + coins_applied
+oop_spent  <- deductible_met * coinsurance
+final_oop  <- min(total_oop, max(0, oop_max - oop_spent))
+```
+:::
+:::
+
+::: {.fragment}
+**Example:** $3,000 deductible, $500 met, 20% coinsurance, $6,000 OOP max → chest pain at Tampa General costs you **$2,963** not $4,118
+:::
+
+---
+
+## Feature: Treatment definitions
+
+**The problem:** Patients see `CPT 84484 — Troponin I` and have no idea what it means or why they're being charged for it.
+
+::: {.columns}
+::: {.column width="50%"}
+**Every billing code badge and service line item now has a hover tooltip with three parts:**
+
+1. **What it is** — full name and CPT code
+2. **What it does** — plain-language description
+3. **Why you see this** — why it appears on an ED bill specifically
+:::
+
+::: {.column width="50%"}
+::: {.fragment}
+**Example: Troponin I**
+
+> *Measures a protein released into the bloodstream when heart muscle cells are damaged. Elevated levels strongly indicate a heart attack. Results typically return in 1–2 hours and are often repeated after 3–6 hours.*
+>
+> **Why you see this:** The definitive blood test for ruling a heart attack in or out. Cannot be skipped for a serious chest pain workup — you may be billed for it twice if a repeat draw is ordered.
+:::
+:::
+:::
+
+---
+
+## Design decisions and trade-offs
+
+::: {.columns}
+::: {.column width="50%"}
+**What we chose and why:**
+
+- **Static price data + live Claude API** — avoids 2GB downloads on every search while still enabling unknown symptom mapping
+- **Payer multipliers instead of raw MRF payer data** — full MRF payer extraction requires parsing hundreds of plan name variations per hospital; multipliers give clinically reasonable estimates immediately
+- **Haversine over Google Maps API** — no API key required, accurate enough for within-county comparisons
+- **Quarto for presentation, Shiny for product** — right tool for each job
+:::
+
+::: {.column width="50%"}
+**What we would improve with more time:**
+
+- Parse actual payer-specific negotiated rates from MRFs by plan name
+- Add real-time wait time data from hospital websites
+- Geocode user address (not just ZIP centroid) for more accurate distances
+- Add urgent care comparison — many conditions are cheaper at urgent care
+- Deploy to shinyapps.io for persistent public access
+- Add a shareable URL encoding current search state
+:::
+:::
+
+---
+
+## What this solves
+
+::: {.r-fit-text}
+The average American cannot answer this question:
+:::
+
+> *"If I go to the nearest ER with chest pain, how much will I pay?"*
+
+::: {.fragment}
+**Before this tool:** 7 separate hospital websites, each with a 2GB CSV file full of billing codes, no way to compare.
+:::
+
+::: {.fragment}
+**After this tool:** Type "chest pain", select your insurer, enter your ZIP. See ranked prices in under 5 seconds.
+:::
+
+::: {.fragment style="margin-top: 2rem; text-align: center;"}
+The data was always public. We made it usable.
+:::
+
+---
+
+## {background-color="#0F6E56"}
+
+::: {.r-fit-text}
+Thank you
+:::
+
+::: {style="text-align: center; color: white; margin-top: 2rem;"}
+**ED Price Transparency Tool — Hillsborough County, FL**
+
+GLHLTH 562: Data Science and Visualization with R
+
+Duke University
+:::
+
+::: {style="text-align: center; color: rgba(255,255,255,0.7); margin-top: 1.5rem; font-size: 0.9rem;"}
+Built with R · Shiny · httr2 · leaflet · plotly · Anthropic Claude API
+
+CMS Hospital Price Transparency data (45 CFR Part 180)
+:::

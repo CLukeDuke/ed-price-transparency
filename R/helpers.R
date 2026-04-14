@@ -134,3 +134,25 @@ heat_color <- function(value, row_min, row_max) {
   
   sprintf("rgb(%d, %d, %d)", r, g, b)
 }
+
+# -----------------------------------------------------------------------------
+# haversine_distance()
+haversine_distance <- function(lat1, lng1, lat2, lng2) {
+  R     <- 3958.8
+  phi1  <- lat1 * pi / 180
+  phi2  <- lat2 * pi / 180
+  dphi  <- (lat2 - lat1) * pi / 180
+  dlng  <- (lng2 - lng1) * pi / 180
+  a <- sin(dphi / 2)^2 +
+       cos(phi1) * cos(phi2) * sin(dlng / 2)^2
+  2 * R * asin(sqrt(a))
+}
+
+# -----------------------------------------------------------------------------
+# get_zip_coords()
+get_zip_coords <- function(zip) {
+  zip   <- trimws(as.character(zip))
+  match <- ZIP_COORDS[ZIP_COORDS$zip == zip, ]
+  if (nrow(match) == 0) return(NULL)
+  list(lat = match$lat[1], lng = match$lng[1])
+}
